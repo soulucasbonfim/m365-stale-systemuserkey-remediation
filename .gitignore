@@ -1,0 +1,19 @@
+# Generated reports and exports
+Reports/
+Stale-SystemUserKey-Scan-*/
+M365-LegacyIdentity-Investigation-*/
+exports/
+*.csv
+*.json
+*.log
+
+# PowerShell local artifacts
+*.ps1xml
+*.pssc
+*.psrc
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
