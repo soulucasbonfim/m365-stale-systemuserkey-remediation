@@ -94,7 +94,7 @@ Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser
 | Parameter | Required | Description |
 | --- | --- | --- |
 | `-TargetUser` | Yes | User principal name or login name to inspect. |
-| `-SpoAdminUrl` | Yes | SharePoint Online admin URL, such as `https://contoso-admin.sharepoint.com`. |
+| `-SpoAdminUrl` | Yes | SharePoint Online admin endpoint or value that can be resolved to it. Accepts a tenant name, admin URL, SharePoint site URL, or OneDrive personal site URL. |
 | `-Credential` | Yes | Credential used for SharePoint Online administration. |
 | `-Execute` | No | Applies remediation. Without this switch, the script only creates evidence and an action plan. |
 | `-OutputRoot` | No | Custom output folder. Defaults to `Reports/<user>/Run-<timestamp>`. |
@@ -110,13 +110,24 @@ Start with a dry-run:
 $cred = Get-Credential
 
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
-  -TargetUser "user@contoso.com" `
-  -SpoAdminUrl "https://contoso-admin.sharepoint.com" `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
   -Credential $cred
 ```
 
 This scans SharePoint and OneDrive site collections, classifies each site, and
 generates reports. No users are removed.
+
+`-SpoAdminUrl` is normalized automatically before connecting to SharePoint
+Online. These values all resolve to the tenant admin endpoint:
+
+```powershell
+-SpoAdminUrl "<tenant-name>"
+-SpoAdminUrl "<tenant-name>.sharepoint.com"
+-SpoAdminUrl "https://<tenant-name>.sharepoint.com/sites/<site-name>"
+-SpoAdminUrl "https://<tenant-name>-my.sharepoint.com/personal/<user-folder>"
+-SpoAdminUrl "https://<tenant-name>-admin.sharepoint.com"
+```
 
 ## Scope the Scan
 
@@ -124,8 +135,8 @@ Scan only OneDrive personal sites:
 
 ```powershell
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
-  -TargetUser "user@contoso.com" `
-  -SpoAdminUrl "https://contoso-admin.sharepoint.com" `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
   -Credential $cred `
   -OnlyPersonalSites
 ```
@@ -134,8 +145,8 @@ Scan only SharePoint sites, excluding OneDrive personal sites:
 
 ```powershell
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
-  -TargetUser "user@contoso.com" `
-  -SpoAdminUrl "https://contoso-admin.sharepoint.com" `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
   -Credential $cred `
   -SkipPersonalSites
 ```
@@ -149,8 +160,8 @@ actions are expected:
 
 ```powershell
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
-  -TargetUser "user@contoso.com" `
-  -SpoAdminUrl "https://contoso-admin.sharepoint.com" `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
   -Credential $cred `
   -Execute
 ```

@@ -37,6 +37,37 @@ function ConvertTo-SafeName {
     return ($Value -replace "^https?://", "" -replace "[^a-zA-Z0-9._-]+", "_").Trim("_")
 }
 
+function Resolve-SpoAdminUrl {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "SPO admin URL could not be resolved. Provide a tenant name, SharePoint URL, OneDrive URL, or admin URL."
+    }
+
+    $candidate = $Value.Trim()
+
+    if ($candidate -match "^[a-zA-Z0-9-]+$") {
+        return "https://$candidate-admin.sharepoint.com"
+    }
+
+    if ($candidate -notmatch "^https?://" -and $candidate -match "^[^/]+\.sharepoint\.com") {
+        $candidate = "https://$candidate"
+    }
+
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($candidate, [System.UriKind]::Absolute, [ref]$uri)) {
+        throw "SPO admin URL could not be resolved from '$Value'. Use a tenant name or a SharePoint URL."
+    }
+
+    $hostName = $uri.Host.ToLowerInvariant()
+    if ($hostName -notmatch "^(.+?)(-admin|-my)?\.sharepoint\.com$") {
+        throw "SPO admin URL could not be resolved from '$Value'. Host '$hostName' is not a SharePoint Online host."
+    }
+
+    $tenantName = $matches[1]
+    return "https://$tenantName-admin.sharepoint.com"
+}
+
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $reportUserFolder = ConvertTo-SafeName $TargetUser
     $OutputRoot = Join-Path (Join-Path (Join-Path $PWD "Reports") $reportUserFolder) ("Run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
@@ -205,9 +236,14 @@ function Invoke-TargetRemoval {
 
 Import-Module Microsoft.Online.SharePoint.PowerShell
 
+$resolvedSpoAdminUrl = Resolve-SpoAdminUrl -Value $SpoAdminUrl
+
 Write-Log "Mode: $(if ($executeRemediation) { 'EXECUTE' } else { 'DRY-RUN' })"
-Write-Log "Connecting to SPO admin: $SpoAdminUrl"
-Connect-SPOService -Url $SpoAdminUrl -Credential $Credential
+if ($resolvedSpoAdminUrl -ne $SpoAdminUrl) {
+    Write-Log "Resolved SPO admin URL: $resolvedSpoAdminUrl"
+}
+Write-Log "Connecting to SPO admin: $resolvedSpoAdminUrl"
+Connect-SPOService -Url $resolvedSpoAdminUrl -Credential $Credential
 
 Write-Log "Exporting current User Profile for $TargetUser"
 Export-SPOUserProfile -LoginName $TargetUser -OutputFolder $OutputRoot
@@ -373,6 +409,8 @@ foreach ($key in $counts.Keys) {
 [pscustomobject]@{
     OutputRoot           = $OutputRoot
     Execute              = $executeRemediation
+    SpoAdminUrlInput     = $SpoAdminUrl
+    SpoAdminUrl          = $resolvedSpoAdminUrl
     SiteScope            = $siteScope
     CurrentLoginName     = $currentLoginName
     CurrentSystemUserKey = $currentSystemUserKey
