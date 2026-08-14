@@ -18,6 +18,8 @@ param(
 
     [int]$ProgressEvery = 25,
 
+    [string]$OnlySitesCsv,
+
     [switch]$OnlyPersonalSites,
 
     [switch]$SkipPersonalSites
@@ -147,9 +149,44 @@ function Test-PersonalSiteUrl {
 
 function Get-ScopedSites {
     param(
+        [string]$SitesCsv,
         [bool]$OnlyPersonal,
         [bool]$SkipPersonal
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($SitesCsv)) {
+        if (-not (Test-Path $SitesCsv)) {
+            throw "OnlySitesCsv file not found: $SitesCsv"
+        }
+
+        $siteUrls = @(Import-Csv -Path $SitesCsv | ForEach-Object {
+            if ($_.PSObject.Properties.Name -contains "SiteUrl") {
+                $_.SiteUrl
+            } elseif ($_.PSObject.Properties.Name -contains "Url") {
+                $_.Url
+            }
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+
+        if ($siteUrls.Count -eq 0) {
+            throw "OnlySitesCsv must contain at least one non-empty SiteUrl or Url value."
+        }
+
+        if ($OnlyPersonal) {
+            $siteUrls = @($siteUrls | Where-Object { Test-PersonalSiteUrl -Url $_ })
+        } elseif ($SkipPersonal) {
+            $siteUrls = @($siteUrls | Where-Object { -not (Test-PersonalSiteUrl -Url $_) })
+        }
+
+        $sites = foreach ($siteUrl in $siteUrls) {
+            try {
+                Get-SPOSite -Identity $siteUrl -ErrorAction Stop
+            } catch {
+                Write-Log "Failed to load scoped site '$siteUrl': $($_.Exception.Message)"
+            }
+        }
+
+        return @($sites)
+    }
 
     if ($OnlyPersonal) {
         try {
@@ -271,7 +308,9 @@ Write-Log "Current LoginName: $currentLoginName"
 Write-Log "Current SystemUserKey: $currentSystemUserKey"
 Write-Log "Current ObjectID: $currentObjectId"
 
-if ($onlyPersonalSitesMode) {
+if (-not [string]::IsNullOrWhiteSpace($OnlySitesCsv)) {
+    $siteScope = "OnlySitesCsv"
+} elseif ($onlyPersonalSitesMode) {
     $siteScope = "OnlyPersonalSites"
 } elseif ($skipPersonalSitesMode) {
     $siteScope = "SkipPersonalSites"
@@ -280,12 +319,15 @@ if ($onlyPersonalSitesMode) {
 }
 
 Write-Log "Enumerating site collections. Scope: $siteScope"
-$sites = @(Get-ScopedSites -OnlyPersonal $onlyPersonalSitesMode -SkipPersonal $skipPersonalSitesMode)
+$sites = @(Get-ScopedSites -SitesCsv $OnlySitesCsv -OnlyPersonal $onlyPersonalSitesMode -SkipPersonal $skipPersonalSitesMode)
 Write-Log "Total site collections: $($sites.Count)"
 
 "# Generated $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" | Set-Content -Path $commandsPath -Encoding UTF8
 "# Execute mode in this run: $executeRemediation" | Add-Content -Path $commandsPath -Encoding UTF8
 "# Site scope: $siteScope" | Add-Content -Path $commandsPath -Encoding UTF8
+if (-not [string]::IsNullOrWhiteSpace($OnlySitesCsv)) {
+    "# OnlySitesCsv: $OnlySitesCsv" | Add-Content -Path $commandsPath -Encoding UTF8
+}
 "# Sites with OldAndCurrent are skipped deliberately." | Add-Content -Path $commandsPath -Encoding UTF8
 
 $counts = [ordered]@{
@@ -433,6 +475,7 @@ foreach ($key in $counts.Keys) {
     AuthMode             = if ($InteractiveAuth -or $null -eq $Credential) { "Interactive" } else { "Credential" }
     AdminLogin           = $adminLogin
     SiteScope            = $siteScope
+    OnlySitesCsv         = $OnlySitesCsv
     CurrentLoginName     = $currentLoginName
     CurrentSystemUserKey = $currentSystemUserKey
     CurrentObjectId      = $currentObjectId

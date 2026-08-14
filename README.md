@@ -101,6 +101,7 @@ Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser
 | `-Execute` | No | Applies remediation. Without this switch, the script only creates evidence and an action plan. |
 | `-OutputRoot` | No | Custom output folder. Defaults to `Reports/<user>/Run-<timestamp>`. |
 | `-ProgressEvery` | No | Progress interval while scanning site collections. Defaults to `25`. |
+| `-OnlySitesCsv` | No | Scans only site URLs listed in a CSV column named `SiteUrl` or `Url`. Useful for executing only sites found in a previous dry-run. |
 | `-OnlyPersonalSites` | No | Scans only OneDrive personal sites. Mutually exclusive with `-SkipPersonalSites`. |
 | `-SkipPersonalSites` | No | Scans only SharePoint sites, excluding OneDrive personal sites. Mutually exclusive with `-OnlyPersonalSites`. |
 
@@ -173,6 +174,16 @@ Scan only SharePoint sites, excluding OneDrive personal sites:
 
 For large tenants, scoped runs are easier to review and safer to execute.
 
+Scan only sites from a previous dry-run or a prepared CSV:
+
+```powershell
+.\Invoke-StaleSystemUserKeyRemediation.ps1 `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
+  -InteractiveAuth `
+  -OnlySitesCsv "<path-to-sites-csv>"
+```
+
 ## Execute Remediation
 
 After reviewing `action-plan.csv`, run with `-Execute` only when the planned
@@ -188,6 +199,27 @@ actions are expected:
 ```
 
 The script removes the target user only from sites classified as `OnlyStale`.
+
+To execute only the `OnlyStale` sites found in a previous dry-run, create a
+targeted CSV from that run's `action-plan.csv`:
+
+```powershell
+$run = "<previous-run-folder>"
+$onlyStaleCsv = Join-Path $run "only-stale-sites.csv"
+
+Import-Csv (Join-Path $run "action-plan.csv") |
+  Where-Object State -eq "OnlyStale" |
+  Select-Object SiteUrl |
+  Export-Csv $onlyStaleCsv -NoTypeInformation -Encoding UTF8
+
+.\Invoke-StaleSystemUserKeyRemediation.ps1 `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
+  -InteractiveAuth `
+  -AdminLogin "<admin-upn>" `
+  -OnlySitesCsv $onlyStaleCsv `
+  -Execute
+```
 
 ## Output Structure
 
