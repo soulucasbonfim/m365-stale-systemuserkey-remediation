@@ -6,8 +6,11 @@ param(
     [Parameter(Mandatory)]
     [string]$SpoAdminUrl,
 
-    [Parameter(Mandatory)]
     [pscredential]$Credential,
+
+    [switch]$InteractiveAuth,
+
+    [string]$AdminLogin,
 
     [switch]$Execute,
 
@@ -242,8 +245,13 @@ Write-Log "Mode: $(if ($executeRemediation) { 'EXECUTE' } else { 'DRY-RUN' })"
 if ($resolvedSpoAdminUrl -ne $SpoAdminUrl) {
     Write-Log "Resolved SPO admin URL: $resolvedSpoAdminUrl"
 }
-Write-Log "Connecting to SPO admin: $resolvedSpoAdminUrl"
-Connect-SPOService -Url $resolvedSpoAdminUrl -Credential $Credential
+if ($InteractiveAuth -or $null -eq $Credential) {
+    Write-Log "Connecting to SPO admin with interactive authentication: $resolvedSpoAdminUrl"
+    Connect-SPOService -Url $resolvedSpoAdminUrl
+} else {
+    Write-Log "Connecting to SPO admin with credential authentication: $resolvedSpoAdminUrl"
+    Connect-SPOService -Url $resolvedSpoAdminUrl -Credential $Credential
+}
 
 Write-Log "Exporting current User Profile for $TargetUser"
 Export-SPOUserProfile -LoginName $TargetUser -OutputFolder $OutputRoot
@@ -292,7 +300,18 @@ $counts = [ordered]@{
     Errors            = 0
 }
 
-$adminLogin = $Credential.UserName
+if (-not [string]::IsNullOrWhiteSpace($AdminLogin)) {
+    $adminLogin = $AdminLogin
+} elseif ($null -ne $Credential) {
+    $adminLogin = $Credential.UserName
+} else {
+    $adminLogin = $null
+}
+
+if ($executeRemediation -and [string]::IsNullOrWhiteSpace($adminLogin)) {
+    throw "Execute mode with interactive authentication requires -AdminLogin so temporary Site Collection Admin assignment can be removed correctly."
+}
+
 $remediatedSites = New-Object System.Collections.Generic.List[string]
 
 foreach ($site in $sites) {
@@ -411,6 +430,8 @@ foreach ($key in $counts.Keys) {
     Execute              = $executeRemediation
     SpoAdminUrlInput     = $SpoAdminUrl
     SpoAdminUrl          = $resolvedSpoAdminUrl
+    AuthMode             = if ($InteractiveAuth -or $null -eq $Credential) { "Interactive" } else { "Credential" }
+    AdminLogin           = $adminLogin
     SiteScope            = $siteScope
     CurrentLoginName     = $currentLoginName
     CurrentSystemUserKey = $currentSystemUserKey

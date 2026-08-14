@@ -95,7 +95,9 @@ Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser
 | --- | --- | --- |
 | `-TargetUser` | Yes | User principal name or login name to inspect. |
 | `-SpoAdminUrl` | Yes | SharePoint Online admin endpoint or value that can be resolved to it. Accepts a tenant name, admin URL, SharePoint site URL, or OneDrive personal site URL. |
-| `-Credential` | Yes | Credential used for SharePoint Online administration. |
+| `-Credential` | No | Credential used for SharePoint Online administration when non-interactive authentication is allowed. Do not use this for MFA-only accounts. |
+| `-InteractiveAuth` | No | Forces interactive SharePoint Online authentication. If neither `-Credential` nor `-InteractiveAuth` is supplied, the script uses interactive authentication. |
+| `-AdminLogin` | No | Admin login used for temporary Site Collection Admin assignment during `-Execute`. Required when executing remediation with interactive authentication. |
 | `-Execute` | No | Applies remediation. Without this switch, the script only creates evidence and an action plan. |
 | `-OutputRoot` | No | Custom output folder. Defaults to `Reports/<user>/Run-<timestamp>`. |
 | `-ProgressEvery` | No | Progress interval while scanning site collections. Defaults to `25`. |
@@ -107,6 +109,27 @@ Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser
 Start with a dry-run:
 
 ```powershell
+.\Invoke-StaleSystemUserKeyRemediation.ps1 `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>"
+```
+
+This scans SharePoint and OneDrive site collections, classifies each site, and
+generates reports. No users are removed.
+
+For tenants that require MFA or Conditional Access, use interactive
+authentication:
+
+```powershell
+.\Invoke-StaleSystemUserKeyRemediation.ps1 `
+  -TargetUser "<user-upn>" `
+  -SpoAdminUrl "<tenant-name>" `
+  -InteractiveAuth
+```
+
+For non-interactive authentication where it is allowed:
+
+```powershell
 $cred = Get-Credential
 
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
@@ -114,9 +137,6 @@ $cred = Get-Credential
   -SpoAdminUrl "<tenant-name>" `
   -Credential $cred
 ```
-
-This scans SharePoint and OneDrive site collections, classifies each site, and
-generates reports. No users are removed.
 
 `-SpoAdminUrl` is normalized automatically before connecting to SharePoint
 Online. These values all resolve to the tenant admin endpoint:
@@ -137,7 +157,7 @@ Scan only OneDrive personal sites:
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
   -TargetUser "<user-upn>" `
   -SpoAdminUrl "<tenant-name>" `
-  -Credential $cred `
+  -InteractiveAuth `
   -OnlyPersonalSites
 ```
 
@@ -147,7 +167,7 @@ Scan only SharePoint sites, excluding OneDrive personal sites:
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
   -TargetUser "<user-upn>" `
   -SpoAdminUrl "<tenant-name>" `
-  -Credential $cred `
+  -InteractiveAuth `
   -SkipPersonalSites
 ```
 
@@ -162,7 +182,8 @@ actions are expected:
 .\Invoke-StaleSystemUserKeyRemediation.ps1 `
   -TargetUser "<user-upn>" `
   -SpoAdminUrl "<tenant-name>" `
-  -Credential $cred `
+  -InteractiveAuth `
+  -AdminLogin "<admin-upn>" `
   -Execute
 ```
 
