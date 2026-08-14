@@ -125,6 +125,21 @@ function Get-ExportFileName {
     return (($User -replace "[^a-zA-Z0-9]+", "_").Trim("_") + "_userinfo.csv")
 }
 
+function Get-SpoExportCsv {
+    param(
+        [Parameter(Mandatory)][string]$Folder,
+        [Parameter(Mandatory)][string]$Suffix,
+        [datetime]$After
+    )
+
+    $files = @(Get-ChildItem -Path $Folder -Filter "*$Suffix" -File -ErrorAction SilentlyContinue |
+        Where-Object { $null -eq $After -or $_.LastWriteTime -ge $After } |
+        Sort-Object LastWriteTime -Descending)
+
+    if ($files.Count -eq 0) { return $null }
+    return $files[0].FullName
+}
+
 function Export-UserInfoRows {
     param(
         [string]$SiteUrl,
@@ -132,9 +147,13 @@ function Export-UserInfoRows {
         [string]$Folder
     )
     $null = New-Item -Path $Folder -ItemType Directory -Force
+    $exportStarted = Get-Date
     Export-SPOUserInfo -Site $SiteUrl -LoginName $User -OutputFolder $Folder -ErrorAction Stop | Out-Null
     $file = Join-Path $Folder (Get-ExportFileName -User $User)
-    if (-not (Test-Path $file)) { return @() }
+    if (-not (Test-Path $file)) {
+        $file = Get-SpoExportCsv -Folder $Folder -Suffix "_userinfo.csv" -After $exportStarted
+    }
+    if ([string]::IsNullOrWhiteSpace($file) -or -not (Test-Path $file)) { return @() }
     return @(Import-Csv $file)
 }
 
@@ -344,9 +363,16 @@ if ($InteractiveAuth -or $null -eq $Credential) {
 }
 
 Write-Log "Exporting current User Profile for $TargetUser"
+$profileExportStarted = Get-Date
 Export-SPOUserProfile -LoginName $TargetUser -OutputFolder $OutputRoot
 $profileFile = Join-Path $OutputRoot (($TargetUser -replace "[^a-zA-Z0-9]+", "_").Trim("_") + "_profile.csv")
-if (-not (Test-Path $profileFile)) { throw "Profile export not found: $profileFile" }
+if (-not (Test-Path $profileFile)) {
+    $profileFile = Get-SpoExportCsv -Folder $OutputRoot -Suffix "_profile.csv" -After $profileExportStarted
+}
+if ([string]::IsNullOrWhiteSpace($profileFile) -or -not (Test-Path $profileFile)) {
+    throw "Profile export not found in output folder: $OutputRoot"
+}
+Write-Log "Profile export file: $profileFile"
 
 $profile = Import-Csv $profileFile | Select-Object -First 1
 $currentSystemUserKey = $profile.SID
