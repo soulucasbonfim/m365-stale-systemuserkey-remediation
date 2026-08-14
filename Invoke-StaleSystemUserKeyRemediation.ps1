@@ -14,6 +14,8 @@ param(
 
     [switch]$Execute,
 
+    [switch]$NoExecutePrompt,
+
     [string]$OutputRoot,
 
     [int]$ProgressEvery = 25,
@@ -35,6 +37,14 @@ $skipPersonalSitesMode = [bool]$SkipPersonalSites.IsPresent
 
 if ($onlyPersonalSitesMode -and $skipPersonalSitesMode) {
     throw "Use only one site scope switch: -OnlyPersonalSites or -SkipPersonalSites."
+}
+
+$scriptRoot = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    $PWD.Path
 }
 
 function ConvertTo-SafeName {
@@ -75,7 +85,7 @@ function Resolve-SpoAdminUrl {
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $reportUserFolder = ConvertTo-SafeName $TargetUser
-    $OutputRoot = Join-Path (Join-Path (Join-Path $PWD "Reports") $reportUserFolder) ("Run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $OutputRoot = Join-Path (Join-Path (Join-Path $scriptRoot "Reports") $reportUserFolder) ("Run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
 
 $null = New-Item -Path $OutputRoot -ItemType Directory -Force
@@ -274,6 +284,49 @@ function Invoke-TargetRemoval {
     }
 }
 
+function Invoke-PlannedSiteRemediation {
+    param(
+        [pscustomobject]$PlannedSite,
+        [string]$User,
+        [string]$AdminLogin,
+        [string]$CurrentSystemUserKey,
+        [object]$Counts,
+        [System.Collections.Generic.List[string]]$RemediatedSites
+    )
+
+    $removal = Invoke-TargetRemoval -SiteUrl $PlannedSite.SiteUrl -User $User -AdminLogin $AdminLogin
+    if ($removal.Success) {
+        $Counts.Remediated++
+        $RemediatedSites.Add($PlannedSite.SiteUrl) | Out-Null
+    } else {
+        $Counts.RemediationFailed++
+    }
+
+    $afterRows = @()
+    try {
+        $afterRows = @(Export-UserInfoRows -SiteUrl $PlannedSite.SiteUrl -User $User -Folder (Join-Path $PlannedSite.SiteExportFolder "after"))
+    } catch {
+        Export-CsvAppend -Rows @([pscustomobject]@{
+            SiteUrl = $PlannedSite.SiteUrl
+            Stage   = "AfterExport"
+            Error   = $_.Exception.Message
+        }) -Path $errorsPath
+    }
+
+    Export-CsvAppend -Rows @([pscustomobject]@{
+        SiteUrl           = $PlannedSite.SiteUrl
+        SiteTitle         = $PlannedSite.SiteTitle
+        SiteOwner         = $PlannedSite.SiteOwner
+        BeforeState       = $PlannedSite.State
+        AfterState        = Get-SiteState -Rows $afterRows -CurrentSystemUserKey $CurrentSystemUserKey
+        Success           = $removal.Success
+        TempAdminAdded    = $removal.TempAdminAdded
+        AdminWasSiteAdmin = $removal.AdminWasSiteAdmin
+        Attempts          = $removal.Attempts
+        Note              = "If AfterState remains OnlyStale, ask owner to share again; SharePoint should recreate the current SystemUserKey."
+    }) -Path $resultsPath
+}
+
 Import-Module Microsoft.Online.SharePoint.PowerShell
 
 $resolvedSpoAdminUrl = Resolve-SpoAdminUrl -Value $SpoAdminUrl
@@ -355,6 +408,8 @@ if ($executeRemediation -and [string]::IsNullOrWhiteSpace($adminLogin)) {
 }
 
 $remediatedSites = New-Object System.Collections.Generic.List[string]
+$plannedOnlyStaleSites = New-Object System.Collections.Generic.List[object]
+$promptedRemediationExecuted = $false
 
 foreach ($site in $sites) {
     $counts.SitesScanned++
@@ -414,38 +469,22 @@ foreach ($site in $sites) {
             'Remove-SPOUser -Site "{0}" -LoginName "{1}"' -f $siteUrl, $TargetUser |
                 Add-Content -Path $commandsPath -Encoding UTF8
 
+            $plannedOnlyStaleSites.Add([pscustomobject]@{
+                SiteUrl          = $siteUrl
+                SiteTitle        = $site.Title
+                SiteOwner        = $site.Owner
+                SiteExportFolder = $siteExportFolder
+                State            = $state
+            }) | Out-Null
+
             if ($executeRemediation) {
-                $removal = Invoke-TargetRemoval -SiteUrl $siteUrl -User $TargetUser -AdminLogin $adminLogin
-                if ($removal.Success) {
-                    $counts.Remediated++
-                    $remediatedSites.Add($siteUrl) | Out-Null
-                } else {
-                    $counts.RemediationFailed++
-                }
-
-                $afterRows = @()
-                try {
-                    $afterRows = @(Export-UserInfoRows -SiteUrl $siteUrl -User $TargetUser -Folder (Join-Path $siteExportFolder "after"))
-                } catch {
-                    Export-CsvAppend -Rows @([pscustomobject]@{
-                        SiteUrl = $siteUrl
-                        Stage   = "AfterExport"
-                        Error   = $_.Exception.Message
-                    }) -Path $errorsPath
-                }
-
-                Export-CsvAppend -Rows @([pscustomobject]@{
-                    SiteUrl           = $siteUrl
-                    SiteTitle         = $site.Title
-                    SiteOwner         = $site.Owner
-                    BeforeState       = $state
-                    AfterState        = Get-SiteState -Rows $afterRows -CurrentSystemUserKey $currentSystemUserKey
-                    Success           = $removal.Success
-                    TempAdminAdded    = $removal.TempAdminAdded
-                    AdminWasSiteAdmin = $removal.AdminWasSiteAdmin
-                    Attempts          = $removal.Attempts
-                    Note              = "If AfterState remains OnlyStale, ask owner to share again; SharePoint should recreate the current SystemUserKey."
-                }) -Path $resultsPath
+                Invoke-PlannedSiteRemediation `
+                    -PlannedSite $plannedOnlyStaleSites[$plannedOnlyStaleSites.Count - 1] `
+                    -User $TargetUser `
+                    -AdminLogin $adminLogin `
+                    -CurrentSystemUserKey $currentSystemUserKey `
+                    -Counts $counts `
+                    -RemediatedSites $remediatedSites
             }
         }
     } catch {
@@ -462,6 +501,34 @@ foreach ($site in $sites) {
     }
 }
 
+if (-not $executeRemediation -and $plannedOnlyStaleSites.Count -gt 0 -and -not $NoExecutePrompt) {
+    Write-Host ""
+    $answer = Read-Host "Dry-run found $($plannedOnlyStaleSites.Count) OnlyStale site(s). Execute remediation now using these results only? (Y/N)"
+    if ($answer -match "^(y|yes|s|sim)$") {
+        if ([string]::IsNullOrWhiteSpace($adminLogin)) {
+            $adminLogin = Read-Host "Admin login used for temporary Site Collection Admin assignment"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($adminLogin)) {
+            throw "Admin login is required to execute remediation from dry-run results."
+        }
+
+        Write-Log "Executing remediation from dry-run results only: $($plannedOnlyStaleSites.Count) site(s)"
+        foreach ($plannedSite in $plannedOnlyStaleSites) {
+            Invoke-PlannedSiteRemediation `
+                -PlannedSite $plannedSite `
+                -User $TargetUser `
+                -AdminLogin $adminLogin `
+                -CurrentSystemUserKey $currentSystemUserKey `
+                -Counts $counts `
+                -RemediatedSites $remediatedSites
+        }
+        $promptedRemediationExecuted = $true
+    } else {
+        Write-Log "Remediation prompt skipped by operator."
+    }
+}
+
 Write-Log "Completed"
 foreach ($key in $counts.Keys) {
     Write-Log "$key`: $($counts[$key])"
@@ -470,6 +537,7 @@ foreach ($key in $counts.Keys) {
 [pscustomobject]@{
     OutputRoot           = $OutputRoot
     Execute              = $executeRemediation
+    PromptedRemediationExecuted = $promptedRemediationExecuted
     SpoAdminUrlInput     = $SpoAdminUrl
     SpoAdminUrl          = $resolvedSpoAdminUrl
     AuthMode             = if ($InteractiveAuth -or $null -eq $Credential) { "Interactive" } else { "Credential" }

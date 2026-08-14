@@ -99,7 +99,8 @@ Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser
 | `-InteractiveAuth` | No | Forces interactive SharePoint Online authentication. If neither `-Credential` nor `-InteractiveAuth` is supplied, the script uses interactive authentication. |
 | `-AdminLogin` | No | Admin login used for temporary Site Collection Admin assignment during `-Execute`. Required when executing remediation with interactive authentication. |
 | `-Execute` | No | Applies remediation. Without this switch, the script only creates evidence and an action plan. |
-| `-OutputRoot` | No | Custom output folder. Defaults to `Reports/<user>/Run-<timestamp>`. |
+| `-NoExecutePrompt` | No | Suppresses the end-of-run prompt that offers to remediate `OnlyStale` sites found during dry-run. |
+| `-OutputRoot` | No | Custom output folder. Defaults to `Reports/<user>/Run-<timestamp>` under the script folder. |
 | `-ProgressEvery` | No | Progress interval while scanning site collections. Defaults to `25`. |
 | `-OnlySitesCsv` | No | Scans only site URLs listed in a CSV column named `SiteUrl` or `Url`. Useful for executing only sites found in a previous dry-run. |
 | `-OnlyPersonalSites` | No | Scans only OneDrive personal sites. Mutually exclusive with `-SkipPersonalSites`. |
@@ -116,7 +117,9 @@ Start with a dry-run:
 ```
 
 This scans SharePoint and OneDrive site collections, classifies each site, and
-generates reports. No users are removed.
+generates reports. If the dry-run finds `OnlyStale` sites, the script asks
+whether to remediate only those results immediately. Answer `N` to keep the run
+read-only.
 
 For tenants that require MFA or Conditional Access, use interactive
 authentication:
@@ -200,8 +203,19 @@ actions are expected:
 
 The script removes the target user only from sites classified as `OnlyStale`.
 
-To execute only the `OnlyStale` sites found in a previous dry-run, create a
-targeted CSV from that run's `action-plan.csv`:
+The preferred interactive workflow is:
+
+1. Run without `-Execute`.
+2. Review the generated summary and counts.
+3. If prompted, answer `Y` only when the listed `OnlyStale` candidates are expected.
+4. Provide `AdminLogin` when prompted if the run used interactive authentication.
+
+Use `-NoExecutePrompt` for a strictly read-only dry-run that must never prompt
+for remediation.
+
+For automation or a later execution window, you can still execute only sites
+from a previous dry-run by creating a targeted CSV from that run's
+`action-plan.csv`:
 
 ```powershell
 $run = "<previous-run-folder>"
@@ -228,6 +242,9 @@ By default, output is written to:
 ```text
 Reports/<target-user>/Run-YYYYMMDD-HHMMSS/
 ```
+
+This `Reports` folder is created next to `Invoke-StaleSystemUserKeyRemediation.ps1`,
+not in the caller's current directory.
 
 Generated files:
 
